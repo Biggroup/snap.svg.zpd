@@ -740,7 +740,7 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
                 zoom: true,            // enable or disable zooming (default enabled)
                 drag: false,           // enable or disable dragging (default disabled)
                 zoomScale: 0.2,        // define zoom sensitivity
-                pinchZoomScale: 0.45,  // define touch pinch zoom sensitivity
+                pinchZoomScale: 0.65,  // define touch pinch zoom sensitivity pinchZoomScale: 0.3 = slower: 0.45 = moderate: 0.65 = faster
                 zoomThreshold: null,   // define zoom threshold
                 touch: true,           // enable or disable touch (default enabled)
                 preventDefaultEvent: { // enable or disable preventDefault call in events (default enabled) WARNING may have unwanted effect
