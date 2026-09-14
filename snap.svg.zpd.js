@@ -154,27 +154,60 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
          * Instance an SVGPoint object with given event coordinates.
          */
         var _findPos = function findPos(obj) {
-          var curleft = curtop = 0;
-          var boundingClientRect = obj.getBoundingClientRect();
-          if (boundingClientRect) {
-            curleft = boundingClientRect.left;
-            curtop = boundingClientRect.top;
-          }
-          return [curleft, curtop];
+            var curleft = curtop = 0;
+            var boundingClientRect = obj.getBoundingClientRect();
+            if (boundingClientRect) {
+                curleft = boundingClientRect.left;
+                curtop = boundingClientRect.top;
+            }
+            return [curleft, curtop];
+        };
+
+        var _getClientPoint = function getClientPoint(event) {
+            if (event.touches && event.touches.length) {
+                if (event.touches.length >= 2) {
+                    return {
+                        x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
+                        y: (event.touches[0].clientY + event.touches[1].clientY) / 2
+                    };
+                }
+
+                return {
+                    x: event.touches[0].clientX,
+                    y: event.touches[0].clientY
+                };
+            }
+
+            if (event.changedTouches && event.changedTouches.length) {
+                return {
+                    x: event.changedTouches[0].clientX,
+                    y: event.changedTouches[0].clientY
+                };
+            }
+
+            return {
+                x: event.clientX,
+                y: event.clientY
+            };
         };
 
         var _getEventPoint = function getEventPoint(event, svgNode) {
 
             var p = svgNode.node.createSVGPoint(),
-            svgPos = _findPos(svgNode.node);
+                clientPoint = _getClientPoint(event),
+                screenCtm = svgNode.node.getScreenCTM(),
+                svgPos;
 
-            if (typeof event.touches != 'undefined') {
-                p.x = event.touches[0].clientX - svgPos[0];
-                p.y = event.touches[0].clientY - svgPos[1];
-            } else {
-                p.x = event.clientX - svgPos[0];
-                p.y = event.clientY - svgPos[1];
+            p.x = clientPoint.x;
+            p.y = clientPoint.y;
+
+            if (screenCtm) {
+                return p.matrixTransform(screenCtm.inverse());
             }
+
+            svgPos = _findPos(svgNode.node);
+            p.x = clientPoint.x - svgPos[0];
+            p.y = clientPoint.y - svgPos[1];
 
             return p;
         };
@@ -228,7 +261,7 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
                 matrix = g.getCTM().multiply(k);
                 matrix.a = matrix.a.toFixed(4);
                 matrix.d = matrix.d.toFixed(4);
-            }
+            };
 
             var threshold = zpdElement.options.zoomThreshold;
 
@@ -241,7 +274,7 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
                     recalculateMatrix(threshold[0]);
 
                 } else if (   (matrix.a > oldMatrix.a && matrix.a > threshold[1])
-                            || (matrix.d > oldMatrix.d && matrix.d > threshold[1])) {
+                    || (matrix.d > oldMatrix.d && matrix.d > threshold[1])) {
 
                     recalculateMatrix(threshold[1]);
                 }
@@ -249,7 +282,51 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
 
             _setCTM(g, matrix);
 
-            if (typeof(stateTf) == 'undefined') {
+            if (!zpdElement.data.stateTf) {
+                zpdElement.data.stateTf = g.getCTM().inverse();
+            }
+
+            zpdElement.data.stateTf = zpdElement.data.stateTf.multiply(k.inverse());
+        };
+
+        var _handleZoomScaleEvent = function handleZoomScaleEvent(event, zpdElement, scale) {
+
+            var g = zpdElement.element.node;
+            var p = _getEventPoint(event, zpdElement.data.svg);
+
+            p = p.matrixTransform(g.getCTM().inverse());
+
+            var k = zpdElement.data.root.createSVGMatrix().translate(p.x, p.y).scale(scale).translate(-p.x, -p.y);
+            var matrix = g.getCTM().multiply(k);
+
+            var recalculateMatrix = function recalculateMatrix(targetScale) {
+                scale = targetScale / g.getCTM().a;
+                k = zpdElement.data.root.createSVGMatrix().translate(p.x, p.y).scale(scale).translate(-p.x, -p.y);
+                matrix = g.getCTM().multiply(k);
+                matrix.a = matrix.a.toFixed(4);
+                matrix.d = matrix.d.toFixed(4);
+            };
+
+            var threshold = zpdElement.options.zoomThreshold;
+
+            if (threshold && typeof threshold === 'object') {
+                var oldMatrix = Snap(g).transform().globalMatrix;
+
+                if (   (matrix.a < oldMatrix.a && matrix.a < threshold[0])
+                    || (matrix.d < oldMatrix.d && matrix.d < threshold[0])) {
+
+                    recalculateMatrix(threshold[0]);
+
+                } else if (   (matrix.a > oldMatrix.a && matrix.a > threshold[1])
+                    || (matrix.d > oldMatrix.d && matrix.d > threshold[1])) {
+
+                    recalculateMatrix(threshold[1]);
+                }
+            }
+
+            _setCTM(g, matrix);
+
+            if (!zpdElement.data.stateTf) {
                 zpdElement.data.stateTf = g.getCTM().inverse();
             }
 
@@ -374,9 +451,7 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
 
                 // On touchend reset the touchZoom variable to false
                 zpdElement.data.touchZoom = false;
-
-                // On touchend reset the prevZoomDistance variable to default value
-                zpdElement.data.prevZoomDistance = null
+                zpdElement.data.prevZoomDistance = null;
 
                 if (zpdElement.data.state == 'pan' || zpdElement.data.state == 'drag') {
 
@@ -398,7 +473,10 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
                 event.returnValue = false;
 
                 // Detect if multi-touch and set touchZoom variable, this will be used in determining when to pan or zoom
-                if (zpdElement.options.touch) zpdElement.data.touchZoom = _isTwoTouch(event);
+                if (zpdElement.options.touch) {
+                    zpdElement.data.touchZoom = _isTwoTouch(event);
+                    zpdElement.data.prevZoomDistance = zpdElement.data.touchZoom ? _getMultiTouchDistance(event) : null;
+                }
 
                 var g = zpdElement.element.node;
 
@@ -446,10 +524,10 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
                     var trans_x=0;
                     var trans_y=0;
                     if ((zpdElement.options.panDirections == 'both') || (zpdElement.options.panDirections == 'horizontal')) {
-                      var trans_x=p.x - zpdElement.data.stateOrigin.x;
+                        var trans_x=p.x - zpdElement.data.stateOrigin.x;
                     }
                     if ((zpdElement.options.panDirections == 'both') || (zpdElement.options.panDirections == 'vertical')) {
-                      var trans_y=p.y - zpdElement.data.stateOrigin.y;
+                        var trans_y=p.y - zpdElement.data.stateOrigin.y;
                     }
 
                     _setCTM(g, zpdElement.data.stateTf.inverse().translate(trans_x,trans_y));
@@ -462,14 +540,14 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
                     var trans_x=0;
                     var trans_y=0;
                     if ((zpdElement.options.panDirections == 'both') || (zpdElement.options.panDirections == 'horizontal')) {
-                      var trans_x=dragPoint.x - zpdElement.data.stateOrigin.x;
+                        var trans_x=dragPoint.x - zpdElement.data.stateOrigin.x;
                     }
                     if ((zpdElement.options.panDirections == 'both') || (zpdElement.options.panDirections == 'vertical')) {
-                      var trans_y=dragPoint.y - zpdElement.data.stateOrigin.y;
+                        var trans_y=dragPoint.y - zpdElement.data.stateOrigin.y;
                     }
 
                     _setCTM(zpdElement.data.stateTarget,
-                            zpdElement.data.root.createSVGMatrix()
+                        zpdElement.data.root.createSVGMatrix()
                             .translate(trans_x, trans_y)
                             .multiply(g.getCTM().inverse())
                             .multiply(zpdElement.data.stateTarget.getCTM()));
@@ -518,27 +596,26 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
 
                 event.returnValue = false;
 
+                zpdElement.data.touchZoom = _isTwoTouch(event);
+
                 // If multi-touch is true, then we are zooming instead of panning or dragging.
                 if (zpdElement.data.touchZoom) {
 
                     var distance = _getMultiTouchDistance(event);
 
-                    if (zpdElement.data.prevZoomDistance != null) {
-                        // The delta value is set to 0.15 as it best matches the zoom sensitivity in browsers. Use zoomScale option to change the zoom sensitivity.
-                        var delta = 0.15; // Case for the pinch being opened.
+                    if (zpdElement.data.prevZoomDistance != null && zpdElement.data.prevZoomDistance > 0) {
+                        var pinchRatio = distance / zpdElement.data.prevZoomDistance;
+                        var scale = Math.pow(pinchRatio, zpdElement.options.pinchZoomScale);
 
-                        // Case for pinch being closed, make the delta negative
-                        if (zpdElement.data.prevZoomDistance > distance) delta = delta * -1;
-
-                        // Stop zooming event when distance equal to prevZoomDistance
-                        if (zpdElement.data.prevZoomDistance != distance) _handleZoomingEvent(event, zpdElement, delta);
+                        _handleZoomScaleEvent(event, zpdElement, scale);
                     }
 
                     // Store the distance between touch positions so we can compare the changes to see if it's getting larger or smaller.
                     zpdElement.data.prevZoomDistance = distance;
                 } else {
 
-                    handleMouseMove (event);
+                    zpdElement.data.prevZoomDistance = null;
+                    handleMouseMove(event);
 
                 }
             };
@@ -557,18 +634,45 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
          * Register handlers
          * desktop and mobile
          */
+        var _supportsPassiveEvents = function supportsPassiveEvents() {
+            var supportsPassive = false;
+
+            try {
+                var opts = Object.defineProperty({}, 'passive', {
+                    get: function () {
+                        supportsPassive = true;
+                    }
+                });
+
+                window.addEventListener('testPassive', null, opts);
+                window.removeEventListener('testPassive', null, opts);
+            } catch (e) {
+                supportsPassive = false;
+            }
+
+            return supportsPassive;
+        };
+
+        var _getTouchEventOptions = function getTouchEventOptions() {
+            return _supportsPassiveEvents() ? { passive: false } : false;
+        };
+
         var _setupHandlers = function setupHandlers(svgElement, handlerFunctions) {
+
+            var touchEventOptions = _getTouchEventOptions();
 
             // mobile
             if ('ontouchend' in document.documentElement) {
 
-                svgElement.addEventListener('touchend', handlerFunctions.mouseOrTouchUp, false);
-                svgElement.addEventListener('touchcancel', handlerFunctions.mouseOrTouchUp, false);
-                svgElement.addEventListener('touchstart', handlerFunctions.mouseOrTouchDown, false);
-                // This event handles both panning and zooming
-                svgElement.addEventListener('touchmove', handlerFunctions.touchMove, false);
+                svgElement.style.touchAction = 'none';
 
-            // desktop
+                svgElement.addEventListener('touchend', handlerFunctions.mouseOrTouchUp, touchEventOptions);
+                svgElement.addEventListener('touchcancel', handlerFunctions.mouseOrTouchUp, touchEventOptions);
+                svgElement.addEventListener('touchstart', handlerFunctions.mouseOrTouchDown, touchEventOptions);
+                // This event handles both panning and zooming
+                svgElement.addEventListener('touchmove', handlerFunctions.touchMove, touchEventOptions);
+
+                // desktop
             } else if ('onmouseup' in document.documentElement) {
 
                 // IE < 9 would need to use the event onmouseup, but they do not support svg anyway..
@@ -592,16 +696,20 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
          */
         var _tearDownHandlers = function tearDownHandlers(svgElement, handlerFunctions) {
 
+            var touchEventOptions = _getTouchEventOptions();
+
             // mobile
             if ('ontouchend' in document.documentElement) {
 
-                svgElement.removeEventListener('touchend', handlerFunctions.mouseOrTouchUp, false);
-                svgElement.removeEventListener('touchcancel', handlerFunctions.mouseOrTouchUp, false);
-                svgElement.removeEventListener('touchstart', handlerFunctions.mouseOrTouchDown, false);
-                // This event handles both panning and zooming
-                svgElement.removeEventListener('touchmove', handlerFunctions.touchMove, false);
+                svgElement.style.touchAction = '';
 
-            // desktop
+                svgElement.removeEventListener('touchend', handlerFunctions.mouseOrTouchUp, touchEventOptions);
+                svgElement.removeEventListener('touchcancel', handlerFunctions.mouseOrTouchUp, touchEventOptions);
+                svgElement.removeEventListener('touchstart', handlerFunctions.mouseOrTouchDown, touchEventOptions);
+                // This event handles both panning and zooming
+                svgElement.removeEventListener('touchmove', handlerFunctions.touchMove, touchEventOptions);
+
+                // desktop
             } else if ('onmouseup' in document.documentElement) {
 
                 svgElement.removeEventListener('mouseup', handlerFunctions.mouseOrTouchUp, false);
@@ -632,9 +740,11 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
                 zoom: true,            // enable or disable zooming (default enabled)
                 drag: false,           // enable or disable dragging (default disabled)
                 zoomScale: 0.2,        // define zoom sensitivity
+                pinchZoomScale: 0.45,  // define touch pinch zoom sensitivity
                 zoomThreshold: null,   // define zoom threshold
                 touch: true,           // enable or disable touch (default enabled)
                 preventDefaultEvent: { // enable or disable preventDefault call in events (default enabled) WARNING may have unwanted effect
+
                     handleMouseOrTouchUp: true,
                     handleMouseOrTouchDown: true,
                     handleMouseMove: true,
@@ -713,7 +823,7 @@ SVGElement.prototype.getTransformToElement = SVGElement.prototype.getTransformTo
                     }
                     for (var prop2 in options) {
                         if (typeof options[prop2] === 'object') {
-                            if (typeof zpdOptions[prop2] !== 'object' || zpdOptions[prop2] === null) {
+                            if (typeof zpdOptions[prop2] !== 'object') {
                                 zpdOptions[prop2] = options[prop2];
                             }
                             for (var subprop2 in options[prop2]) {
